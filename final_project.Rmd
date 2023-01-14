@@ -1,0 +1,1146 @@
+---
+title: "SL_final"
+output: html_document
+date: '2022-12-28'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+
+### package
+```{r}
+library(dplyr)
+library(tidyverse)
+library(tree)
+library(randomForest)
+# xgm
+library(caret)
+library(gbm)
+library(xgboost)
+# knn
+library(class)
+library(modelr) # cv
+# forward, backward
+library(MASS)
+library(ggplot2)                     
+library(GGally)
+library(corrplot)
+```
+
+
+```{r}
+dat = read.csv('dat2.csv', header=T)
+dat = dat[,-c(1,22:23)]
+```
+
+```{r}
+dat$Attrition_Flag = ifelse(dat$Attrition_Flag=='Existing Customer', 0, 1)
+dat$Attrition_Flag = as.factor(dat$Attrition_Flag)
+dat$Gender = as.factor(dat$Gender)
+dat$Education_Level = as.factor(dat$Education_Level)
+dat$Marital_Status = as.factor(dat$Marital_Status)
+# dat$Income_Category = as.factor(dat$Income_Category)
+dat$Income_Category = factor(dat$Income_Category, order=T, 
+                             levels=c("Unknown", "Less than $40K","$40K - $60K","$60K - $80K","$80K - $120K","$120K +"))
+dat$Card_Category = as.factor(dat$Card_Category)
+dat$Customer_Age2factor = cut(dat$Customer_Age, 
+                              breaks=c(25,29,39,49,59,73),
+                              labels=c('26-29','30-39','40-49','50-59','60-73'))
+dat$Avg_Utilization_Ratio2factor = cut(dat$Avg_Utilization_Ratio,
+                                       breaks=seq(-1e-9,1,0.2))
+```
+
+```{r}
+set.seed(1)
+train_index = sample(nrow(dat), 0.7*nrow(dat)) #
+dat_train = dat[train_index,]
+dat_test = dat[-train_index,]
+```
+
+
+
+### EDA
+
+```{r}
+colnames(dat_train)
+continuous_cols = c('Customer_Age','Dependent_count','Months_on_book','Total_Relationship_Count',
+                    'Months_Inactive_12_mon','Contacts_Count_12_mon','Credit_Limit','Total_Revolving_Bal',
+                    'Avg_Open_To_Buy','Total_Amt_Chng_Q4_Q1','Total_Trans_Amt','Total_Trans_Ct','Total_Ct_Chng_Q4_Q1',
+                    'Avg_Utilization_Ratio')
+corrplot(cor(dat_train[,continuous_cols]))
+```
+
+
+
+
+分析順序: 流失的:客戶資訊 -> 信用卡資訊 -> 交易資訊 -> 週期資訊
+
+## 客戶資訊
+
+
+## 2d 性別 - y
+```{r}
+# tmp = dat_train %>%
+#   group_by(Attrition_Flag, Gender) %>%
+#   summarise(count=n(), .groups='drop_last') %>%
+#   mutate(frac=count/sum(count))
+# tmp$ymax = cumsum(tmp$frac)
+# tmp$ymin = c(0, head(tmp$ymax, n=-1))
+# tmp$Gender = factor(tmp$Gender, levels=c('M', 'F'))
+# tmp
+# 
+# ggplot(tmp[tmp$Attrition_Flag==1,], aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=Gender)) +
+#   geom_rect() +
+#   coord_polar(theta="y") + # Try to remove that to understand how the chart is built initially
+#   xlim(c(2, 4)) +
+#   theme_void() +
+#   theme(legend.position='right',
+#         legend.key.size=unit(0.5, 'cm'),
+#         legend.title=element_text(size=0),
+#         legend.text=element_text(size=10)) +
+#   scale_fill_manual(values=c('#4a4a4a', '#8c0044'))
+```
+
+
+```{r}
+tmp = dat_train %>% 
+  group_by(Attrition_Flag, Gender) %>%
+  summarise(count=n(), .groups='drop_last') %>%
+  mutate(ratio=round(count/sum(count),2))
+
+ggplot(tmp, aes(x=Gender, y=ratio, fill=Attrition_Flag)) +
+  geom_col(position="dodge", width=0.6) +
+  # geom_text(aes(label=ratio), colour="white", size=3, vjust=1.5, position=position_dodge(.9)) +
+  # ggtitle('') +
+  # xlab('') + ylab('') +
+  theme_minimal() +
+  theme(legend.position=c(0.85,0.9),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=8)) +
+  scale_fill_manual(values=c('#4a4a4a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer'))
+```
+
+
+
+
+
+
+## 2d 年齡 - y
+```{r}
+tmp = dat_train %>% 
+  group_by(Attrition_Flag, Customer_Age2factor) %>%
+  summarise(count=n(), .groups='drop_last') %>%
+  mutate(ratio=round(count/sum(count),2))
+tmp
+# tmp$Customer_Age2factor = factor(tmp$Customer_Age2factor,
+                                 # levels=c("26-35","36-45","46-55","56-73"))
+ggplot(tmp, aes(x=Customer_Age2factor, y=ratio, fill=Attrition_Flag)) +
+  geom_col(position="dodge", width=0.6) +
+  # geom_text(aes(label=ratio), colour="white", size=3, vjust=1.5, position=position_dodge(.9)) +
+  # ggtitle('') +
+  # xlab('') + ylab('') +
+  theme_minimal() +
+  theme(legend.position=c(0.9,0.8),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=8)) +
+  scale_fill_manual(values=c('#4a4a4a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer'))
+
+
+ggplot(dat_train, aes(x=Customer_Age, y=Attrition_Flag, fill=Attrition_Flag)) +
+  geom_boxplot()
+```
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+
+
+
+## 2d 收入 - y
+```{r}
+tmp = dat_train %>%
+  group_by(Attrition_Flag, Income_Category) %>%
+  summarize(count=n(), .groups='drop_last') %>%
+  mutate(ratio=round(count/sum(count),2))
+tmp
+tmp$Income_Category = factor(tmp$Income_Category,
+                             levels=c("Less than $40K","$40K - $60K","$60K - $80K","$80K - $120K","$120K +","Unknown"))
+tmp
+ggplot(tmp, aes(x=Income_Category, y=ratio, fill=Attrition_Flag)) +
+  geom_col(position="dodge", width=0.6) +
+  # geom_text(aes(label=ratio), colour="white", size=3, vjust=1.5, position=position_dodge(.9)) +
+  # ggtitle('') +
+  # xlab('') + ylab('') +
+  theme_minimal() +
+  theme(legend.position=c(0.85,0.9),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=8)) +
+  scale_fill_manual(values=c('#4a4a4a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer'))
+```
+
+
+
+
+## 2d 教育 - y
+```{r}
+tmp = dat_train %>%
+  group_by(Attrition_Flag, Education_Level) %>%
+  summarize(count=n(), .groups='drop_last') %>%
+  mutate(ratio=round(count/sum(count),2))
+# tmp
+tmp$Education_Level = factor(tmp$Education_Level, 
+                             levels=c('Uneducated','High School','College','Post-Graduate','Graduate','Doctorate','Unknown'))
+ggplot(tmp, aes(x=Education_Level, y=ratio, fill=Attrition_Flag)) +
+  geom_col(position="dodge", width=0.6) +
+  # geom_text(aes(label=ratio), colour="white", size=3, vjust=1.5, position=position_dodge(.9)) +
+  # ggtitle('') +
+  # xlab('') + ylab('') +
+  theme_minimal() +
+  theme(legend.position=c(0.88,0.83),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=8)) +
+  scale_fill_manual(values=c('#4a4a4a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer'))
+```
+
+1. 在不同的教育水準下，Uneducated, High School, Graduate 和 Unknown 佔流失客戶的78%
+
+
+
+## 3d 收入 - 教育 - y
+```{r}
+dat_train %>% 
+  filter(Attrition_Flag==1) %>%
+  group_by(Education_Level, Income_Category) %>%
+  summarise(count=n()) %>%
+  arrange(desc(count))
+```
+
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+
+## 2d 婚姻 - y (PASS)
+```{r}
+tmp = dat_train %>%
+  group_by(Attrition_Flag, Marital_Status) %>%
+  summarize(count=n(), .groups='drop_last') %>%
+  mutate(ratio=round(count/sum(count),2))
+tmp
+
+ggplot(tmp, aes(x=Marital_Status, y=ratio, fill=Attrition_Flag)) +
+  geom_col(position="dodge", width=0.6) +
+  # geom_text(aes(label=ratio), colour="white", size=3, vjust=1.5, position=position_dodge(.9)) +
+  # ggtitle('') +
+  # xlab('') + ylab('') +
+  theme_minimal() +
+  theme(legend.position=c(0.88,0.83),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=8)) +
+  scale_fill_manual(values=c('#4a4a4a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer'))
+```
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+## 信用卡資訊: Credit_Limit - Total_Revolving_Bal - Avg_Open_To_Buy - Avg_Utilization_Ratio
+
+## 2d 卡別 - y (Show table)
+```{r}
+tmp = dat_train %>%
+  group_by(Attrition_Flag, Card_Category) %>%
+  summarize(count=n(), .groups='drop_last') %>%
+  mutate(ratio=round(count/sum(count),3))
+tmp
+```
+
+
+
+
+
+## 2d 信用餘額 - y (PASS)
+```{r}
+ggplot(dat_train, aes(x=Credit_Limit, fill=Attrition_Flag)) +
+  geom_density(alpha=0.6) +
+  theme_minimal() +
+  theme(legend.position=c(0.85,0.9),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=10),
+        axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  scale_fill_manual(values=c('gray75','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer'))
+```
+
+
+
+
+## 2d 信用利用率 - y
+```{r}
+tmp = dat_train %>%
+  group_by(Attrition_Flag, Avg_Utilization_Ratio2factor) %>%
+  summarise(count=n(), .groups='drop_last') %>%
+  mutate(ratio=round(count/sum(count),2))
+tmp
+ggplot(tmp, aes(x=Avg_Utilization_Ratio2factor, y=ratio, fill=Attrition_Flag)) +
+  geom_col(position="dodge", width=0.8) +
+  scale_x_discrete(labels=c('(-1e-09,0.2]'='(0,0.2]')) +
+  # geom_text(aes(label=ratio), colour="white", size=3, vjust=1.5, position=position_dodge(.9)) +
+  # ggtitle('') +
+  # xlab('') + ylab('') +
+  theme_minimal() +
+  theme(legend.position=c(0.75,0.8),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        # panel.grid.minor=element_blank(),
+        legend.text=element_text(size=10)) +
+  scale_fill_manual(values=c('#5a5a5a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer'))
+```
+
+
+1. 額度使用率(使用額度/信用卡信用額度)低代表該客戶在本信用卡公司的消費是不頻繁的
+
+2. 在低使用率與高使用率的族群，是最容易流失的客群
+
+
+## (cont.) 分析高使用率的客群離開原因
+```{r}
+hist(dat_train$Total_Trans_Ct)
+summary(dat_train$Credit_Limit)
+summary(dat_train$Total_Trans_Amt)
+summary(dat_train$Total_Revolving_Bal)
+
+index = (dat_train$Attrition_Flag==1) & (dat_train$Avg_Utilization_Ratio>0.8)
+sum(index)
+summary(dat_train[index,]$Credit_Limit)
+summary(dat_train[index,]$Total_Trans_Amt)
+summary(dat_train[index,]$Total_Revolving_Bal)
+
+index2 = (dat_train$Attrition_Flag==1) & (dat_train$Avg_Utilization_Ratio<=0.2)
+sum(index2)
+summary(dat_train[index2,]$Credit_Limit)
+summary(dat_train[index2,]$Total_Trans_Amt)
+summary(dat_train[index2,]$Total_Revolving_Bal)
+
+
+ggplot(dat_train, aes(x=Credit_Limit, y=Avg_Utilization_Ratio, fill=Attrition_Flag, col=Attrition_Flag)) +
+  geom_point(size=0.2) +
+  geom_point(data=dat_train[index,], aes(x=Credit_Limit, y=Avg_Utilization_Ratio, col='red'))
+
+
+
+
+ggplot(dat_train, aes(x=Credit_Limit, y=Total_Revolving_Bal, col=Attrition_Flag)) +
+  geom_point(size=1) +
+  geom_abline(intercept=0, slope=1)
+
+range(dat_train$Avg_Utilization_Ratio)
+```
+
+
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+
+
+
+
+## 交易資訊: Total_Trans_Ct - Total_Trans_Amt - Total_Ct_Chng_Q4_Q1 - Total_Amt_Chng_Q4_Q1
+
+
+
+## 3d 交易量 - 交易金額 - y
+```{r}
+ggplot(dat_train, aes(x=Total_Trans_Ct, y=Total_Trans_Amt, col=Attrition_Flag)) +
+  geom_point(size=1) +
+  theme_minimal() +
+  theme(legend.position=c(0.15,0.9),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=10),
+        axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  scale_color_manual(values=c('#6e6e6e','#8c0044'),
+                     labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_y_continuous(breaks=c(0,5000,10000,11000,15000)) +
+  geom_hline(yintercept=11000, col='red', linetype='dashed')
+  
+```
+
+1. 信用卡的交易次數對於客戶的留存與否至關重要，是客戶離開前可能表現出的警訊
+
+2. 交數次數與交易金額呈現高度正相關(correlation=0.81)，因此從兩者皆能解釋多數客戶的留存與否
+
+
+
+
+## (cont.) 分析交易金額低於11000美金的用戶
+```{r}
+summary(dat_train[(dat_train$Total_Trans_Amt<=11000)&(dat_train$Attrition_Flag==1),]$Total_Trans_Ct)
+summary(dat_train[dat_train$Total_Trans_Amt<=11000&(dat_train$Attrition_Flag==0),]$Total_Trans_Ct)
+
+ggplot(dat_train[dat_train$Total_Trans_Amt<=11000,], aes(x=Total_Trans_Ct, y=Attrition_Flag, color=Attrition_Flag)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(legend.position='none',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=10),
+        axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  scale_color_manual(values=c('#6e6e6e','#8c0044'),
+                     labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_y_discrete(labels=c('1'='Attrited', '0'='Exising'))
+```
+
+
+
+
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+
+
+## 2d Q4/Q1 - y
+```{r}
+ggplot(dat_train, aes(x=Total_Ct_Chng_Q4_Q1, fill=Attrition_Flag)) +
+  geom_density(alpha=0.6) +
+  geom_vline(xintercept=0.5, col='black', linetype='dashed') +
+  theme_minimal() +
+  theme(legend.position=c(0.9,0.85),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=10),
+        axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  scale_fill_manual(values=c('#4a4a4a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_x_continuous(breaks=c(0, 0.25, 0.5, 0.75, 1,2,3,4), labels=c(0, 0.25, 0.5, 0.75, 1,2,3,4))
+
+
+
+
+apply(dat_train[dat_train$Attrition_Flag==1, c('Total_Ct_Chng_Q4_Q1', 'Total_Amt_Chng_Q4_Q1')], 2, mean)
+apply(dat_train[dat_train$Attrition_Flag==0, c('Total_Ct_Chng_Q4_Q1', 'Total_Amt_Chng_Q4_Q1')], 2, mean)
+apply(dat_train[dat_train$Attrition_Flag==1, c('Total_Ct_Chng_Q4_Q1', 'Total_Amt_Chng_Q4_Q1')], 2, median)
+apply(dat_train[dat_train$Attrition_Flag==0, c('Total_Ct_Chng_Q4_Q1', 'Total_Amt_Chng_Q4_Q1')], 2, median)
+df = data.frame(Total_Ct_Chng_Q4_Q1=c(0.5501227,0.7422487),
+                Total_Amt_Chng_Q4_Q1=c(0.6940684,0.7728658),
+                Attrition_Flag=c(1,0))
+df$Attrition_Flag = factor(df$Attrition_Flag)
+
+ggplot(dat_train, aes(x=Total_Ct_Chng_Q4_Q1, y=Total_Amt_Chng_Q4_Q1, col=Attrition_Flag)) +
+  geom_point(size=0.6) +
+  annotate('point', x=0.522, y=0.700, col='red', size=2) + # y=1
+  annotate('point', x=0.720, y=0.743, col='gray95', size=2) + # y=0
+  theme_minimal() +
+  theme(legend.position=c(0.15,0.9),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=10),
+        axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  scale_color_manual(values=c('#6e6e6e','#8c0044'),
+                     labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_x_continuous(breaks=c(0, 0.25, 0.5, 0.75, 1,2,3,4), labels=c(0, 0.25, 0.5, 0.75, 1,2,3,4))
+
+
+ggplot(dat_train, aes(x=Total_Ct_Chng_Q4_Q1, y=Attrition_Flag, color=Attrition_Flag)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(legend.position='none',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=10),
+        axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  scale_color_manual(values=c('#6e6e6e','#8c0044'),
+                     labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_y_discrete(labels=c('1'='Attrited', '0'='Exising'))
+  
+ggplot(dat_train, aes(x=Total_Amt_Chng_Q4_Q1, y=Attrition_Flag, color=Attrition_Flag)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(legend.position='none',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=10),
+        axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  scale_color_manual(values=c('#6e6e6e','#8c0044'),
+                     labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_y_discrete(labels=c('1'='Attrited', '0'='Exising'))
+
+sum(dat_train$Total_Ct_Chng_Q4_Q1<=1)/7088
+sum(dat_train$Total_Amt_Chng_Q4_Q1<=1)/7088
+```
+
+1. 數據顯示多數消費者在Q4/Q1交易數的變化率介在0~1之間，年末的交易量低於年初不是客戶離開的主要原因
+
+2. 在流失的客戶中，Q4的交易數量僅剩Q1的一半，反觀留存的客戶交易數量的中位數可以保持在Q1的3/4左右
+
+
+
+
+
+
+## PCA
+```{r}
+library(stats)
+dat_train2pca = dat_train[,c('Total_Trans_Ct','Total_Trans_Amt','Total_Ct_Chng_Q4_Q1','Total_Amt_Chng_Q4_Q1',
+                             'Credit_Limit','Total_Revolving_Bal','Avg_Open_To_Buy','Avg_Utilization_Ratio')]
+dat_train2pca = prcomp(dat_train2pca)
+dat_train2pca$sdev^2/sum(dat_train2pca$sdev^2)
+plot(dat_train2pca$x[,1:2])
+```
+
+
+## ggalluvial
+```{r}
+library(ggalluvial)
+dat_train$Income_Category
+tmp = dat_train[dat_train$Attrition_Flag==1,] %>%
+  count(Gender, Customer_Age2factor, Income_Category, Education_Level) %>%
+  arrange(desc(n)) %>%
+  mutate(interesting_group=ifelse((Gender=='F') & 
+                                  (Customer_Age2factor=='46-55'|Customer_Age2factor=='36-45') &
+                                  (Income_Category=='Less than $40K') &
+                                  (Education_Level=='Graduate'|Education_Level=='High School'), 
+                                  'Interesting', 'Not Interesting'))
+
+tmp
+ggplot(tmp, aes(y=n, axis1=Gender, axis2=Customer_Age2factor, axis3=Income_Category, axis4=Education_Level)) +
+  geom_alluvium(aes(fill=interesting_group)) +
+  geom_stratum(absolute=FALSE, width=0.6) +
+  geom_text(stat="stratum", aes(label=after_stat(stratum)), absolute=FALSE, size=3) +
+  scale_x_discrete(limits=c("Gender", "Customer_Age2factor", "Income_Category", "Education_Level")) +
+  theme(legend.position='none')
+
+
+
+dat_train[dat_train$Attrition_Flag==1,] %>% 
+  count(Gender, Customer_Age2factor, Income_Category, Education_Level) %>%
+  arrange(desc(n)) 
+```
+
+
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+## 週期資訊: Months_on_book - Months_Inactive_12_mon - Contacts_Count_12_mon - Total_Relationship_Count
+
+
+## 2d Total_Relationship_Count - y
+```{r}
+summary(dat_train[dat_train$Attrition_Flag==1,]$Contacts_Count_12_mon)
+summary(dat_train[dat_train$Attrition_Flag==0,]$Contacts_Count_12_mon)
+
+tmp = dat_train %>% 
+  group_by(Attrition_Flag, Total_Relationship_Count) %>%
+  summarise(count=n(), .groups='drop_last') %>%
+  mutate(ratio=count/sum(count))
+
+tmp
+ggplot(tmp, aes(x=Total_Relationship_Count, y=ratio, fill=Attrition_Flag)) +
+  geom_col(position="dodge", width=0.8) +
+  # scale_x_discrete(labels=c('(-1e-09,0.1]'='(0,0.1]')) +
+  # geom_text(aes(label=ratio), colour="white", size=3, vjust=1.5, position=position_dodge(.9)) +
+  # ggtitle('') +
+  # xlab('') + ylab('') +
+  theme_minimal() +
+  theme(legend.position=c(0.85,0.85),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        # panel.grid.minor=element_blank(),
+        legend.text=element_text(size=10)) +
+  scale_fill_manual(values=c('#5a5a5a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_x_continuous(breaks=c(1,2,3,4,5,6))
+
+
+
+tmp = dat_train %>% 
+  group_by(Total_Relationship_Count, Attrition_Flag) %>%
+  summarise(count=n(), .groups='drop_last') %>%
+  mutate(ratio=count/sum(count))
+tmp[tmp$Attrition_Flag==1,]
+
+ggplot(tmp, aes(x=Total_Relationship_Count, y=ratio, col=Attrition_Flag)) +
+  geom_line(size=1) +
+  geom_point(size=2) +
+  theme_minimal() +
+  theme(legend.position='top',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        axis.line=element_line(colour='black'),
+        legend.text=element_text(size=8)) +
+  scale_color_manual(values=c('#4a4a4a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_x_continuous(breaks=seq(1,6))
+
+ggplot(tmp[tmp$Attrition_Flag==1,], aes(x=Total_Relationship_Count, y=ratio, col=Attrition_Flag)) +
+  geom_line(size=1) +
+  geom_point(size=2) +
+  theme_minimal() +
+  theme(legend.position='top',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        axis.line=element_line(colour='black'),
+        legend.text=element_text(size=8)) +
+  scale_color_manual(values=c('#8c0044'),
+                    labels=c('Attrited Customer')) +
+  scale_x_continuous(breaks=seq(1,6)) +
+  ylim(0,1)
+```
+
+
+
+
+
+
+## 2d Contacts_Count_12_mon - y
+```{r}
+tmp = dat_train %>% 
+  group_by(Attrition_Flag, Contacts_Count_12_mon) %>%
+  summarise(count=n(), .groups='drop_last') %>%
+  mutate(ratio=round(count/sum(count),2))
+
+
+ggplot(tmp, aes(x=Contacts_Count_12_mon, y=ratio, fill=Attrition_Flag)) +
+  geom_col(position="dodge", width=0.8) +
+  # scale_x_discrete(labels=c('(-1e-09,0.1]'='(0,0.1]')) +
+  # geom_text(aes(label=ratio), colour="white", size=3, vjust=1.5, position=position_dodge(.9)) +
+  # ggtitle('') +
+  # xlab('') + ylab('') +
+  theme_minimal() +
+  theme(legend.position=c(0.85,0.85),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        # panel.grid.minor=element_blank(),
+        legend.text=element_text(size=10)) +
+  scale_fill_manual(values=c('#5a5a5a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_x_continuous(breaks=c(1,2,3,4,5,6))
+
+
+
+tmp = dat_train %>% 
+  group_by(Contacts_Count_12_mon, Attrition_Flag) %>%
+  summarise(count=n(), .groups='drop_last') %>%
+  mutate(ratio=count/sum(count))
+tmp
+tmp[tmp$Attrition_Flag==1,]
+
+ggplot(tmp, aes(x=Contacts_Count_12_mon, y=ratio, col=Attrition_Flag)) +
+  geom_line(size=1) +
+  geom_point(size=2) +
+  theme_minimal() +
+  theme(legend.position='top',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        axis.line=element_line(colour='black'),
+        legend.text=element_text(size=8)) +
+  scale_color_manual(values=c('#4a4a4a','#8c0044'),
+                    labels=c('Existing Customer', 'Attrited Customer')) +
+  scale_x_continuous(breaks=seq(0,6))
+
+ggplot(tmp[tmp$Attrition_Flag==1,], aes(x=Contacts_Count_12_mon, y=ratio, col=Attrition_Flag)) +
+  geom_line(size=1) +
+  geom_point(size=2) +
+  theme_minimal() +
+  theme(legend.position='top',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        axis.line=element_line(colour='black'),
+        legend.text=element_text(size=8)) +
+  scale_color_manual(values=c('#8c0044'),
+                    labels=c('Attrited Customer')) +
+  scale_x_continuous(breaks=seq(1,6))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ==============================================================================================
+
+```{r}
+dat_gbm = dat[,-c(21,22)] # remove factor(use to eda)
+dat_gbm = dat_gbm %>% mutate(dummy=1) %>% spread(key=Gender,value=dummy, fill=0)
+dat_gbm = dat_gbm %>% mutate(dummy=1) %>% spread(key=Education_Level,value=dummy, fill=0)
+dat_gbm = dat_gbm %>% mutate(dummy=1) %>% spread(key=Marital_Status,value=dummy, fill=0)
+dat_gbm = dat_gbm %>% mutate(dummy=1) %>% spread(key=Income_Category,value=dummy, fill=0)
+dat_gbm = dat_gbm %>% mutate(dummy=1) %>% spread(key=Card_Category,value=dummy, fill=0)
+colnames(dat_gbm)[c(21,22,28:32)] = c("High_School", "Post_Graduate", "Less_than_40K","A40","A60","A80","A120") # change name
+dat_gbm = dat_gbm[,!colnames(dat_gbm) %in% c("Avg_Open_To_Buy", "M", "A120", "Silver")]
+dat_gbm_train = dat_gbm[train_index,]
+dat_gbm_test = dat_gbm[-train_index,]
+
+colnames(dat_gbm_train)
+dat_gbm_train #p=36
+dat_gbm_test #p=36
+```
+
+
+
+
+## Model part
+```{r}
+### Define F1_score function
+F1_score_func = function(table){
+  TN = table[1,1]
+  TP = table[2,2]
+  FN = table[1,2]
+  FP = table[2,1]
+  PRE = TP / (TP+FP)
+  REC = TP / (TP+FN)
+  F1 = 2 * (PRE*REC)/(PRE+REC)
+  return(F1)
+}
+
+Recall_fun = function(table){
+  TN = table[1,1]
+  TP = table[2,2]
+  FN = table[1,2]
+  FP = table[2,1]
+  REC = TP / (TP+FN)
+  return(REC)
+}
+```
+
+
+
+## Up-sampling, Down-sampling
+```{r}
+# table(dat_train$Attrition_Flag) # 5963 1125
+
+
+# Unsampling
+dat_gbm_train_major = dat_gbm_train[dat_gbm_train$Attrition_Flag==0,]
+dat_gbm_train_minor = dat_gbm_train[dat_gbm_train$Attrition_Flag==1,]
+set.seed(1)
+index_unsampling = sample(rownames(dat_gbm_train_major), nrow(dat_gbm_train_minor))
+dat_gbm_train_major = dat_gbm_train_major[index_unsampling,]
+dat_gbm_train_unsampling = rbind(dat_gbm_train_major, dat_gbm_train_minor)
+# cv_rf = tuneRF(x=dat_gbm_train_unsampling[,-1], y=as.factor(dat_gbm_train_unsampling[,1]), ntreeTry=300, trace=FALSE, plot=FALSE)
+# plot(cv_rf) # m=10
+# rf_model = randomForest(Attrition_Flag~., data=dat_gbm_train_unsampling, mtry=10, importance=TRUE)
+# rf_pred = predict(rf_model, dat_gbm_test)
+# mean(rf_pred == dat_gbm_test[,1])
+# F1_score_func(rf_confusion_matrix)
+
+# Upsampling
+dat_gbm_train_major = dat_gbm_train[dat_gbm_train$Attrition_Flag==0,]
+dat_gbm_train_minor = dat_gbm_train[dat_gbm_train$Attrition_Flag==1,]
+set.seed(1)
+index_upsampling = sample(rownames(dat_gbm_train_minor), nrow(dat_gbm_train_major)-nrow(dat_gbm_train_minor), replace=T)
+index_upsampling = c(rownames(dat_gbm_train_minor), index_upsampling)
+dat_gbm_train_minor = dat_gbm_train_minor[index_upsampling,]
+dat_gbm_train_upsampling = rbind(dat_gbm_train_major, dat_gbm_train_minor)
+# cv_rf = tuneRF(x=dat_gbm_train_upsampling[,-1], y=as.factor(dat_gbm_train_upsampling[,1]), ntreeTry=300, trace=FALSE, plot=FALSE)
+# plot(cv_rf) # m=10
+# rf_model = randomForest(Attrition_Flag~., data=dat_gbm_train_upsampling, mtry=10, importance=TRUE)
+# rf_pred = predict(rf_model, dat_gbm_test)
+# mean(rf_pred == dat_gbm_test[,1])
+# F1_score_func(rf_confusion_matrix)
+
+# # SMOTE
+# library(performanceEstimation)
+# dim(dat_gbm_train)
+# # perc.over: 在minor上做up-sampling
+# # perc.under:1
+# tmp = smote(Attrition_Flag~., dat_gbm_train, perc.over=4, perc.under=2) 
+# table(tmp$Attrition_Flag)
+# # perc.over=4 1125*4+1125=5625 
+# # perc.under=1 5625-1125=4500
+# # result=5625+4500=xxx
+# table(tmp$Attrition_Flag)
+# rf_model = randomForest(Attrition_Flag~., data=tmp, mtry=10, importance=TRUE)
+# rf_pred = predict(rf_model, dat_gbm_test)
+# mean(rf_pred == dat_gbm_test[,1])
+# F1_score_func(rf_confusion_matrix)
+```
+
+
+
+
+### Decision tree
+First, execute 5 fold cross validation to select the terminal nodes of the tree model.  
+```{r, out.width='60%', fig.align='center'}
+set.seed(1) #cv
+tree_model = tree(Attrition_Flag~., dat_gbm_train_upsampling)
+cv_tree_model = cv.tree(tree_model, K=10, FUN=prune.misclass)
+plot(cv_tree_model$size, cv_tree_model$dev, type="b", pch=16, 
+     xlab='Terminal node', ylab='Residual mean deviance', main='Decision tree')
+prune_tree_model = prune.tree(tree_model, best=10)
+# plot(prune_tree_model)
+# text(prune_tree_model, pretty=0)
+prune_tree_pred = predict(prune_tree_model, dat_gbm_test, type='class')
+prune_tree_acc = mean(prune_tree_pred == dat_gbm_test[,1])
+prune_tree_confusion_matrix = table(dat_gbm_test[,1], prune_tree_pred)
+prune_tree_f1 = F1_score_func(prune_tree_confusion_matrix)
+```
+
+
+
+
+### Randomforest - upsampling
+Execute OOB method to select the hyper-parameter m(number of random select predictors) of the Randomforest.  
+```{r}
+# tune
+set.seed(1) # rf
+cv_rf = tuneRF(x=dat_gbm_train_upsampling[,-1], y=as.factor(dat_gbm_train_upsampling[,1]), ntreeTry=300, trace=FALSE, plot=FALSE)
+ggplot(data.frame(cv_rf), aes(x=mtry, y=OOBError)) +
+  geom_line(size=0.7) +
+  geom_point(size=2) +
+  # ggtitle('Cross validation of the 10 fold in KNN') +
+  xlab('number of variables') + ylab('OOB Error') +
+  theme_minimal() +
+  theme(axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  geom_vline(xintercept=5, col='red', linetype='dashed')
+
+
+
+set.seed(1) # RF
+rf_model = randomForest(Attrition_Flag~., data=dat_gbm_train, mtry=5, importance=TRUE)
+rf_pred = predict(rf_model, dat_gbm_test)
+rf_acc = mean(rf_pred == dat_gbm_test[,1])
+rf_confusion_matrix = table(dat_gbm_test[,1], rf_pred)
+rf_f1 = F1_score_func(rf_confusion_matrix)
+rf_recall = Recall_fun(rf_confusion_matrix)
+# rf_model$votes[,1]
+# library(ROSE)
+# roc.curve(dat_gbm_test[,1], rf_model$votes[,1], lwd=2)
+
+
+# check convergence
+library(reshape2)
+tmp = data.frame(rf_model$err.rate)
+tmp$index = 1:500
+colnames(tmp) = c('OOB', 'lower', 'upper', 'index')
+melt_tmp = melt(tmp, id='index')
+melt_tmp
+ggplot(melt_tmp, aes(x=index, y=value, col=variable)) +
+  geom_line(size=0.7, aes(linetype=variable)) +
+  # ggtitle('Cross validation of the 10 fold in KNN') +
+  xlab('number of trees') + ylab('OOB Error') +
+  theme_minimal() +
+  theme(legend.position=c(0.9,0.85),
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=10),
+        axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  scale_color_manual(values=c('black', '#8c0044', 'gray75')) +
+  scale_linetype_manual(values=c('solid', 'dashed', 'dashed'))
+
+View(rf_model)
+
+tmp = data.frame(rf_model$importance)
+tmp$index = rownames(tmp)
+
+tmp$index = factor(tmp$index, levels=tmp$index[order(tmp$MeanDecreaseGini, decreasing=F)])
+ggplot(data=head(tmp,18), aes(y=index, x=MeanDecreaseGini, fill=index)) +
+  geom_col(position='dodge') +
+  ylab('variables') +
+  theme_minimal() +
+  theme(legend.position='none',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        # panel.grid.minor=element_blank(),
+        legend.text=element_text(size=10)) +
+  scale_fill_manual(values=c(rep('#6e6e6e',11), rep('#8c0044',7)))
+  
+```
+
+
+
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+
+
+### Gradient boosting - upsampling
+```{r}
+set.seed(1)
+gbm_model = train(Attrition_Flag~., data=dat_gbm_train_upsampling, method="gbm", verbose=F, trControl=trainControl("cv", number=10))
+# View(gbm_model)
+gbm_model$results %>%
+  arrange(desc(Accuracy))
+
+gbm_pred = predict(gbm_model, dat_gbm_test)
+gbm_acc = mean(gbm_pred == dat_gbm_test[,1])
+gbm_confusion_matrix = table(dat_gbm_test[,1], gbm_pred)
+gbm_f1 = F1_score_func(gbm_confusion_matrix)
+gbm_recall = Recall_fun(gbm_confusion_matrix)
+
+tmp = summary(gbm_model, plot=FALSE)
+tmp$var = factor(tmp$var, levels=tmp$var[order(tmp$rel.inf, decreasing=F)])
+tmp
+ggplot(data=head(tmp,18), aes(y=var, x=rel.inf, fill=var)) +
+  geom_col(position='dodge') +
+  ylab('variables') +
+  theme_minimal() +
+  theme(legend.position='none',
+        legend.key.size=unit(0.5, 'cm'),
+        legend.title=element_text(size=0),
+        # panel.grid.minor=element_blank(),
+        legend.text=element_text(size=10)) +
+  scale_fill_manual(values=c(rep('#6e6e6e',15), rep('#8c0044',3)))
+```
+
+
+
+## Add some noise factors
+Add noise in my training data, n1:rnorm(.,0,0.1), n2:runif(.,0,1) and n3:rbinom(.,1,0.4), respectively.
+```{r}
+dat_noise = dat_gbm_train_upsampling
+set.seed(1)
+dat_noise$n1 = rnorm(nrow(dat_noise), 0, 0.1)
+dat_noise$n2 = runif(nrow(dat_noise), 0, 1)
+dat_noise$n3 = rbinom(nrow(dat_noise), 1, 0.4)
+dat_noise_train = dat_noise[train_index, ]
+dat_noise_test = dat_noise[-train_index, ]
+noise_gbm_model = train(Attrition_Flag~., data=dat_noise_train, method="gbm", verbose=F, trControl=trainControl("cv", number=10))
+tmp = summary(noise_gbm_model, plot=FALSE)
+ggplot(data=head(tmp,20), aes(x=rel.inf, y=reorder(var, rel.inf), fill=rel.inf)) +
+  geom_bar(stat="summary", width=0.95) +
+  xlab('Relative influence') + ylab('variable') +
+  ggtitle('Boosting variables important plot')
+```
+
+From this experiment, we can see that Gradient boosting is good for $\bf{resisting\ noise}$, because the noise we added (n1, n2, n3) is placed almost at the bottom by gradient boosting, and the important thing we discussed in the previous part variables are not affected in any way.  
+
+Therefore, the important variables screened out by the model are quite meaningful.
+
+
+
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+
+## SVM linear - unsampling
+```{r}
+library(e1071)
+set.seed(1)
+svm_tune_linear_model = tune(svm, Attrition_Flag~., data=dat_gbm_train_unsampling, kernel='linear',
+                             ranges=list(cost=c(1e-7,1e-6,1e-5,1e-4,1e-3))) #cost=0.01,0.1,1,2,3,5,10
+svm_tune_linear_model$performances %>%
+  arrange(desc(error))
+svm_tune_linear_model$best.parameters # cost=0.1
+svm_linear_pred = predict(svm_tune_linear_model$best.model, dat_gbm_test)
+svm_linear_acc = mean(svm_linear_pred == dat_gbm_test[,1])
+svm_linear_confusion_matrix = table(dat_gbm_test[,1], svm_linear_pred)
+svm_linear_f1 = F1_score_func(svm_linear_confusion_matrix)
+svm_linear_recall = Recall_fun(svm_linear_confusion_matrix)
+svm_linear_acc; svm_linear_f1; svm_linear_recall
+```
+
+
+## SVM RBF - unsampling
+```{r}
+set.seed(1)
+# svm_tune_rbf_model = tune(svm, Attrition_Flag~., data=dat_train, kernel='radial', 
+#                              ranges=list(cost=c(0.01, 0.1, 1), gamma=c(0.1, 1, 10))) # 88
+svm_tune_rbf_model = tune(svm, Attrition_Flag~., data=dat_gbm_train_unsampling, kernel='radial',
+                             ranges=list(cost=c(1,2,3,4), gamma=c(1e-5,1e-4,1e-3)))
+svm_tune_rbf_model$best.parameters # cost=6, gamma=0.1
+svm_tune_rbf_model$performances
+svm_rbf_pred = predict(svm_tune_rbf_model$best.model, dat_gbm_test)
+svm_rbf_acc = mean(svm_rbf_pred == dat_gbm_test[,1])
+svm_rbf_confusion_matrix = table(dat_gbm_test[,1], svm_rbf_pred)
+svm_rbf_f1 = F1_score_func(svm_rbf_confusion_matrix)
+svm_rbf_recall = Recall_fun(svm_rbf_confusion_matrix)
+svm_rbf_acc; svm_rbf_f1; svm_rbf_recall
+```
+
+
+
+
+
+# ----------------------------------------------------------------------------------------------
+
+
+
+
+
+## Linear Discriminant Analysis - upsampling
+```{r}
+set.seed(1)
+lda_model = lda(Attrition_Flag~., data=dat_gbm_train_upsampling)
+lda_pred = predict(lda_model, dat_gbm_test, expand.na=FALSE)
+lda_acc = mean(lda_pred$class == dat_gbm_test[,1])
+lda_confusion_matrix = table(dat_gbm_test[,1], lda_pred$class)
+lda_f1 = F1_score_func(lda_confusion_matrix)
+lda_recall = Recall_fun(lda_confusion_matrix)
+lda_acc; lda_f1; lda_recall
+```
+
+
+
+## Qudratic Discriminant Analysis - upsampling
+```{r}
+set.seed(1)
+qda_model = qda(Attrition_Flag~., data=dat_gbm_train_upsampling)
+qda_pred = predict(qda_model, dat_gbm_test, expand.na=FALSE)
+qda_acc = mean(qda_pred$class == dat_gbm_test[,1])
+qda_confusion_matrix = table(dat_gbm_test[,1], qda_pred$class)
+qda_f1 = F1_score_func(qda_confusion_matrix)
+qda_recall = Recall_fun(lda_confusion_matrix)
+qda_acc; qda_f1; qda_recall
+```
+
+
+
+### Logistic regression - Not argumentation
+```{r}
+lr_model = glm(Attrition_Flag~., data=dat_gbm_train, family=binomial)
+lr_prob = predict(lr_model, dat_gbm_test, type='response')
+lr_pred = ifelse(lr_prob>0.5, 1, 0)
+lr_acc = mean(lr_pred == dat_gbm_test[,1])
+lr_confusion_matrix = table(dat_gbm_test[,1], lr_pred)
+lr_f1 = F1_score_func(lr_confusion_matrix)
+lr_recall = Recall_fun(lr_confusion_matrix)
+lr_acc; lr_f1; lr_recall
+```
+
+
+
+## KNN - unsampling
+First, use cross validation to choose optimal K in the KNN model.
+```{r}
+K = 30 # knn hyperparameters
+kfold = 10 # k-folds
+knn_cv_valid_err = c()
+set.seed(1)
+# tmp = dat_gbm_train_unsampling
+# train_mean = apply(tmp[,-1], 2, mean)
+# train_sd = apply(tmp[,-1], 2, sd)
+# tmp = scale(tmp[,-1])
+# tmp = data.frame(Attrition_Flag=dat_gbm_train_unsampling[,1], tmp)
+# tmp_test = data.frame(scale(dat_gbm_test[,-1], center=train_mean, scale=train_sd))
+
+cv = crossv_kfold(dat_gbm_train_unsampling, k=kfold)
+for (k in 1:K){
+  tmp_vec = c()
+  for (i in 1:kfold){
+    knn_val_pred = knn(data.frame(cv$train[[i]])[-1],data.frame(cv$test[[i]])[-1], c(data.frame(cv$train[[i]])[1])$Attrition_Flag, k=k)
+    knn_val_true = data.frame(cv$test[[i]])$Attrition_Flag
+    tmp_vec[i] = mean(knn_val_pred == knn_val_true) #acc
+  }
+  knn_cv_valid_err[k] = 1 - mean(tmp_vec) #1-acc
+}
+which.min(knn_cv_valid_err)
+df = data.frame(index=1:K, knn_cv_valid_err=knn_cv_valid_err)
+ggplot(df, aes(x=1/index, y=knn_cv_valid_err)) +
+  geom_line(size=1) +
+  # ggtitle('Cross validation of the 10 fold in KNN') +
+  xlab('1/K') + ylab('Error rate') +
+  theme_minimal() +
+  theme(axis.line=element_line(colour='black'),
+        panel.grid.minor=element_blank()) +
+  geom_vline(xintercept=1/5, col='red', linetype='dashed') +
+  scale_x_continuous(breaks=c(0, 1/5, 0.25, 0.5, 0.75, 1), labels=c(0, '1/5',0.25, 0.5, 0.75, 1))
+
+
+knn_pred = knn(dat_gbm_train_unsampling[,-1], dat_gbm_test[,-1], dat_gbm_train_unsampling[,1], k=5, prob=TRUE)
+knn_acc = mean(knn_pred == dat_gbm_test[,1])
+knn_confusion_matrix = table(dat_gbm_test[,1], knn_pred)
+knn_f1 = F1_score_func(knn_confusion_matrix)
+knn_recall = Recall_fun(knn_confusion_matrix)
+knn_acc; knn_f1; knn_recall
+
+```
+
+
+
+### Forward selection - Not argumentation
+Define Null model and Full model are $\text{glm(count~1, family='binomial')}$ and $\text{glm(count~., family='binomial')}$, respectively.  
+
+Summary of Forward selection model.  
+```{r}
+glm_null = glm(Attrition_Flag~1, data=dat_gbm_train, family=binomial)
+glm_full = glm(Attrition_Flag~., data=dat_gbm_train, family=binomial)
+forward_glm = stepAIC(glm_full, direction='forward', trace=FALSE, scope=list(lower=formula(glm_null), upper=formula(glm_full)))
+forward_glm_prob = predict(forward_glm, dat_gbm_test, type='response')
+forward_glm_pred = ifelse(forward_glm_prob>0.5, 1, 0)
+forward_glm_acc = mean(forward_glm_pred == dat_gbm_test[,1])
+forward_glm_confusion_matrix = table(dat_gbm_test[,1], forward_glm_pred)
+forward_glm_f1 = F1_score_func(forward_glm_confusion_matrix)
+forward_glm_recall = Recall_fun(forward_glm_confusion_matrix)
+forward_glm_acc; forward_glm_f1; forward_glm_recall
+```
+By Forward selection and AIC criteria, we choose the final model equal to the Full model.
+
+
+
+### Backward selection - Not argumentation
+```{r}
+backward_glm = stepAIC(glm_full, direction='backward', trace=FALSE, scope=list(lower=formula(glm_null), upper=formula(glm_full)))
+backward_glm_prob = predict(backward_glm, dat_gbm_test, type='response')
+backward_glm_pred = ifelse(backward_glm_prob>0.5, 1, 0)
+backward_glm_acc = mean(backward_glm_pred == dat_gbm_test[,1])
+backward_glm_confusion_matrix = table(dat_gbm_test[,1], backward_glm_pred)
+backward_glm_f1 = F1_score_func(backward_glm_confusion_matrix)
+backward_glm_recall = Recall_fun(backward_glm_confusion_matrix)
+backward_glm_acc; backward_glm_f1; backward_glm_recall
+```
+
+
+## Model performance
+```{r}
+c(rf_acc, gbm_acc, svm_linear_acc, svm_rbf_acc, lda_acc, qda_acc, lr_acc, knn_acc, forward_glm_acc, backward_glm_acc)
+c(rf_f1, gbm_f1, svm_linear_f1, svm_rbf_f1, lda_f1, qda_f1, lr_f1, knn_f1, forward_glm_f1, backward_glm_f1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
